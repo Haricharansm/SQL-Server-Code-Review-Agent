@@ -1,6 +1,6 @@
 # SQL Server Stored Procedure Code Review Agent
 
-Review a T-SQL stored procedure or view using static rules, SQL Server catalog and runtime evidence, and optional Azure OpenAI recommendations. The collector runs SELECT statements against metadata and DMVs. The reviewed module and proposed rewrites stay under the caller's control.
+Review a T-SQL stored procedure or view using static rules, SQL Server catalog and runtime evidence, and optional AI-generated T-SQL rewrites. The collector runs SELECT statements against metadata and DMVs. The reviewed module and proposed rewrites stay under the caller's control.
 
 ## Setup
 
@@ -27,7 +27,23 @@ python -m unittest discover -s tests -v
 
 Capture the actual plan while running representative parameter values in an appropriate test environment. Run live sampling from a separate connection while the target SPID is active. The SPID is supplied by the operator. Verify it is executing the intended statement, and repeat the sample to catch intermittent waits. Query Store collects historical aggregates when enabled and populated. The report displays up to 20 recent rows, with durations and CPU in microseconds and reads in logical pages.
 
-Set the Azure variables from `.env.example` to enable AI. The deployment must support Azure OpenAI chat completions. The explicit `--ai` flag sends the complete reviewed definition, findings, and collected evidence to the configured Azure deployment. The evidence can include SQL identifiers, index filter predicates and wait resources. Derived plan findings are sent without uploading the raw Showplan. Use a deployment approved for those data. An AI error leaves a local report and exits with status 1.
+## Choose the AI backend
+
+Use `--ai-provider azure`, `--ai-provider openai`, or `--ai-provider compatible` to select a provider for one run. For a server-wide default, set `SQL_REVIEW_AI_PROVIDER` and invoke the CLI with `--ai`. Without a configured default, `--ai` selects Azure OpenAI.
+
+| Provider | Configuration |
+| --- | --- |
+| `azure` | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_KEY`, and optionally `AZURE_OPENAI_API_VERSION` |
+| `openai` | `OPENAI_API_KEY` and `OPENAI_MODEL` |
+| `compatible` | `SQL_REVIEW_AI_BASE_URL`, `SQL_REVIEW_AI_MODEL`, and `SQL_REVIEW_AI_API_KEY` if the endpoint requires authentication |
+
+For example, after configuring an OpenAI-compatible endpoint such as local Ollama:
+
+```sh
+python reviewer.py --procedure dbo.usp_GetDeals --ai-provider compatible --out ai-review.md
+```
+
+Use a provider and model that support Chat Completions. An explicit AI flag sends the complete reviewed definition, findings, and collected evidence to the selected endpoint. That can include SQL identifiers, index filter predicates, wait resources, and derived plan findings. The raw Showplan stays local. Use a provider approved for those data. Configuring a default alone keeps AI disabled. A provider failure leaves a local report, exits with status 1, and does not retry with a different provider. Review and validate generated SQL before using it.
 
 ## Interpreting results
 
@@ -46,7 +62,7 @@ The example procedure illustrates an opt-in narrow result and keyset pagination.
 
 ## Files
 
-- `reviewer.py` — CLI, deterministic rules, catalog collection and optional Azure integration.
+- `reviewer.py` — CLI, deterministic rules, catalog collection and optional AI provider selection.
 - `sql/diagnostics.sql` — named, parameterized SELECT queries loaded by the CLI.
 - `sql/safe_example_rewrite.sql` — illustrative paginated stored procedure.
 - `tests/test_reviewer.py` — offline rule and report tests.
