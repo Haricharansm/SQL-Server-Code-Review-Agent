@@ -66,3 +66,16 @@ The example procedure illustrates an opt-in narrow result and keyset pagination.
 - `sql/diagnostics.sql` — named, parameterized SELECT queries loaded by the CLI.
 - `sql/safe_example_rewrite.sql` — illustrative paginated stored procedure.
 - `tests/test_reviewer.py` — offline rule and report tests.
+
+## Browser interface
+
+From the project directory, start the local web interface:
+
+```sh
+python -m pip install -r requirements.txt
+python app.py
+```
+
+Open `http://127.0.0.1:8000`. Paste T-SQL or load the built-in example for an offline review. Choose **Database object** to review a stored procedure or view from the SQL Server configured in `SQLSERVER_CONNECTION_STRING`. You can attach a Showplan file, supply a live session ID in database mode, and download the findings as Markdown.
+
+AI is off by default in the browser. Select a provider to request a proposed rewrite. Provider credentials and models come from the same server-side settings as the CLI. The interface is designed for single-user loopback access.

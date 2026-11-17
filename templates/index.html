@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SQL Review Studio</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}">
+  <script defer src="{{ url_for('static', filename='studio.js') }}"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand"><span class="mark" aria-hidden="true">›_</span> SQL Review Studio</div>
+    <span class="platform">SQL Server <span aria-hidden="true">/</span> T-SQL</span>
+  </div>
+</header>
+<main>
+  <div class="intro">
+    <h1>Review a stored procedure</h1>
+    <p>Inspect SQL, investigate performance, and generate a candidate rewrite.</p>
+  </div>
+
+  <div class="workspace">
+    <form class="panel" method="post" enctype="multipart/form-data" id="review-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <fieldset class="entry">
+        <legend>Review input</legend>
+        <div class="switch">
+          <label><input type="radio" name="source" value="editor" {{ 'checked' if values.source != 'database' }}> SQL editor</label>
+          <label><input type="radio" name="source" value="database" {{ 'checked' if values.source == 'database' }}> Database object</label>
+        </div>
+        <div id="editor-fields" {% if values.source == 'database' %}hidden{% endif %}>
+          <div class="editor-top"><label for="sql">T-SQL definition</label><button type="button" class="text-button" id="load-example">Load example</button></div>
+          <textarea id="sql" name="sql" maxlength="200000" spellcheck="false" placeholder="Paste a stored procedure or view definition…">{{ values.sql }}</textarea>
+        </div>
+        <div id="database-fields" {% if values.source != 'database' %}hidden{% endif %}>
+          <label for="module">Stored procedure or view</label>
+          <input type="text" name="module" id="module" placeholder="dbo.usp_GetDeals" value="{{ values.module }}">
+          <label for="spid" class="secondary-label">Active session ID <span>optional</span></label>
+          <input type="number" name="spid" id="spid" min="1" max="32767" placeholder="57" value="{{ values.spid }}">
+          <p class="help">Uses the SQL Server connection configured on this machine.</p>
+        </div>
+      </fieldset>
+      <fieldset class="options">
+        <legend>Review options</legend>
+        <label for="plan">Execution plan <span>optional</span></label>
+        <input type="file" name="plan" id="plan" accept=".sqlplan,.xml">
+        <label for="provider" class="secondary-label">AI rewrite</label>
+        <select name="provider" id="provider" aria-describedby="provider-help">
+          <option value="">Off · rules and diagnostics only</option>
+          {% for id, name in providers.items() %}
+          <option value="{{ id }}" {{ 'selected' if values.provider == id }}>{{ name }}</option>
+          {% endfor %}
+        </select>
+        <p class="help" id="provider-help">Selecting a provider sends the SQL definition and collected evidence to that endpoint.</p>
+      </fieldset>
+      <div class="actions">
+        <button class="primary" id="submit-review" type="submit">Run review <span aria-hidden="true">→</span></button>
+        <span id="run-status" role="status"></span>
+      </div>
+    </form>
+
+    <section class="panel results" id="results" {% if result or error %}data-complete{% endif %} aria-labelledby="results-heading" tabindex="-1">
+      <div class="result-header">
+        <div><h2 id="results-heading">Review results</h2>
+          {% if result %}<p>{{ result.findings|length }} findings from the supplied evidence</p>{% endif %}
+        </div>
+        {% if result %}<button type="button" class="outline" id="download-report">Download report</button>{% endif %}
+      </div>
+      {% if error %}
+      <p class="notice error" role="alert">{{ error }}</p>
+      {% elif not result %}
+      <div class="empty">
+        <span class="empty-icon" aria-hidden="true">[ ]</span>
+        <h3>No review yet</h3>
+        <p>Paste a definition or load the example, then run a review to see the findings here.</p>
+      </div>
+      {% else %}
+        {% if result.ai_error %}<p class="notice error" role="alert">{{ result.ai_error }} The diagnostics are available below.</p>{% endif %}
+        {% if not result.findings %}<p class="notice">No rules matched the supplied evidence.</p>{% endif %}
+        {% for finding in result.findings %}
+        <article class="finding">
+          <div class="finding-meta"><span class="pill {{ finding.severity|lower }}">{{ finding.severity }}</span><span>{{ finding.basis }}</span></div>
+          <h3>{{ finding.title }}</h3>
+          <dl>
+            <dt>Evidence</dt><dd>{{ finding.evidence }}</dd>
+            <dt>Suggested fix</dt><dd>{{ finding.fix }}</dd>
+            <dt>Validation</dt><dd>{{ finding.validation }}</dd>
+          </dl>
+        </article>
+        {% endfor %}
+        {% if result.proposal %}
+        <article class="finding">
+          <h3>AI-assisted rewrite</h3>
+          <p class="help">Validate the candidate in a test database before using it.</p>
+          {% if result.candidate_sql %}
+          <div class="editor-top candidate-top"><strong>Candidate T-SQL</strong><button class="outline" type="button" id="copy-sql">Copy SQL</button></div>
+          <pre id="candidate-sql">{{ result.candidate_sql }}</pre>
+          <span id="copy-status" class="help" role="status"></span>
+          <details><summary>Full AI review</summary><pre>{{ result.proposal }}</pre></details>
+          {% else %}
+          <pre>{{ result.proposal }}</pre>
+          {% endif %}
+        </article>
+        {% endif %}
+        {% if result.notes or result.evidence %}
+        <details>
+          <summary>Collection notes and evidence</summary>
+          {% if result.notes %}<ul>{% for note in result.notes %}<li>{{ note }}</li>{% endfor %}</ul>{% endif %}
+          {% if result.evidence %}<pre>{{ result.evidence|tojson(indent=2) }}</pre>{% endif %}
+        </details>
+        {% endif %}
+        <script type="application/json" id="report-data">{{ result.report|tojson }}</script>
+      {% endif %}
+    </section>
+  </div>
+</main>
+</body>
+</html>
