@@ -52,3 +52,33 @@ class StudioTests(TestCase):
     def test_token_and_untrusted_hosts_are_rejected(self):
         self.assertEqual(self.review(csrf="invalid").status_code, 403)
         self.assertEqual(self.client.get("/", headers={"Host": "example.com"}).status_code, 400)
+
+    def test_live_rewrite_remains_editable_until_explicit_draft_request(self):
+        import re
+
+        evidence = dict(dependencies=[], objects={}, live_request=[])
+        config = {"SQLSERVER_CONNECTION_STRING": "test", "SQL_REVIEW_GITHUB_REPOSITORY": "team/db",
+                  "SQL_REVIEW_GITHUB_MODULES": '{"dbo.p":"sql/p.sql"}'}
+        with patch.dict("os.environ", config), patch(
+            "app.collect", return_value=("SELECT 1", evidence, [])
+        ), patch("app.ai_review", return_value="```sql\nSELECT 2;\n```"), patch(
+            "app.create_draft", return_value="https://github.com/team/db/pull/1"
+        ) as create:
+            response = self.review(source="database", module="dbo.p", provider="azure")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b"Original T-SQL", response.data)
+            create.assert_not_called()
+            token = re.search(r'name="draft_token" value="([^"]+)"', response.get_data(as_text=True))[1]
+            forged = self.client.post("/draft", data=dict(csrf=self.csrf, candidate="SELECT 3;", draft_token="bad"))
+            self.assertEqual(forged.status_code, 400)
+            create.assert_not_called()
+            draft = self.client.post("/draft", data=dict(csrf=self.csrf, candidate="SELECT 3;", draft_token=token))
+            self.assertEqual(draft.json["url"], "https://github.com/team/db/pull/1")
+            self.assertEqual(create.call_args.args[2], "SELECT 3;\n")
+
+    def test_compare_returns_edited_line_changes(self):
+        response = self.client.post("/compare", data=dict(
+            csrf=self.csrf, original="SELECT 1;", candidate="SELECT 3;"
+        ))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("-SELECT 1;\n+SELECT 3;", response.json["diff"])

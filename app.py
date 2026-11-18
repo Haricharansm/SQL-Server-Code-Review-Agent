@@ -1,5 +1,6 @@
 """Local browser interface for the SQL Server reviewer."""
 
+from difflib import unified_diff
 import os
 from pathlib import Path
 import re
@@ -7,9 +8,11 @@ import secrets
 from tempfile import TemporaryDirectory
 
 from defusedxml.common import DefusedXmlException
-from flask import Flask, abort, render_template, request, session
+from flask import Flask, abort, jsonify, render_template, request, session
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from xml.etree.ElementTree import ParseError
 
+from github_review import DraftError, create_draft, review_target, source_digest
 from reviewer import (
     AI_PROVIDERS, AIConfigurationError, ai_review, catalog_findings, collect,
     plan_findings, render, request_findings, static_findings,
@@ -89,7 +92,8 @@ def review_form(values, upload):
     snippets = re.findall(r"^`{3}(?:sql|tsql|t-sql)[ \t]*\r?\n(.*?)^`{3}[ \t]*$", proposal,
                           flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
     return dict(
-        candidate_sql="\n\n".join(snippets), findings=findings, evidence=evidence, notes=notes, proposal=proposal,
+        original_sql=definition, candidate_sql=snippets[0] if len(snippets) == 1 else "",
+        findings=findings, evidence=evidence, notes=notes, proposal=proposal,
         ai_error=ai_error, report=render(label, findings, evidence, notes, proposal),
     )
 
@@ -102,12 +106,23 @@ def index():
     result, error = None, ""
     status = 200
     if request.method == "POST":
-        if not secrets.compare_digest(request.form.get("csrf", "").encode(), session["csrf"].encode()):
-            abort(403)
+        check_csrf()
         for key in values:
             values[key] = request.form.get(key, values[key])
         try:
             result = review_form(values, request.files.get("plan"))
+            if result["proposal"] and values["source"] == "database":
+                module = values["module"].strip()
+                try:
+                    repo, base, path = review_target(module)
+                except DraftError:
+                    pass
+                else:
+                    result["draft_target"] = f"{repo}/{path} ({base})"
+                    result["draft_token"] = draft_signer().dumps({
+                        "module": module, "original": source_digest(result["original_sql"]),
+                        "titles": sorted({finding.title for finding in result["findings"]}),
+                    })
         except (ParseError, DefusedXmlException):
             error, status = "The execution plan is not valid SQL Server Showplan XML.", 400
         except ValueError as exc:
@@ -118,6 +133,46 @@ def index():
         "index.html", csrf=session["csrf"], values=values, providers=PROVIDERS,
         result=result, error=error,
     ), status
+
+
+def draft_signer():
+    return URLSafeTimedSerializer(app.secret_key, salt=f"draft:{session['csrf']}")
+
+
+def check_csrf():
+    csrf = session.get("csrf", "")
+    if not csrf or not secrets.compare_digest(request.form.get("csrf", "").encode(), csrf.encode()):
+        abort(403)
+
+
+@app.post("/compare")
+def compare():
+    check_csrf()
+    original = request.form.get("original", "")
+    candidate = request.form.get("candidate", "")
+    if max(len(original), len(candidate)) > SQL_LIMIT:
+        return jsonify(error="Each definition must be 200,000 characters or fewer."), 400
+    diff = unified_diff(original.splitlines(), candidate.splitlines(),
+                        fromfile="Original", tofile="Candidate", lineterm="")
+    return jsonify(diff="\n".join(diff))
+
+
+@app.post("/draft")
+def draft():
+    check_csrf()
+    try:
+        review = draft_signer().loads(request.form.get("draft_token", ""), max_age=3600)
+    except BadSignature:
+        return jsonify(error="The review expired or is invalid. Run a new live review."), 400
+
+    candidate = request.form.get("candidate", "").strip()
+    if not candidate or len(candidate) > SQL_LIMIT:
+        return jsonify(error="Enter a candidate between 1 and 200,000 characters."), 400
+    try:
+        url = create_draft(review["module"], review["original"], candidate + "\n", review["titles"])
+    except DraftError as exc:
+        return jsonify(error=str(exc)), 400
+    return jsonify(url=url)
 
 
 if __name__ == "__main__":

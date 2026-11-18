@@ -79,3 +79,11 @@ python app.py
 Open `http://127.0.0.1:8000`. Paste T-SQL or load the built-in example for an offline review. Choose **Database object** to review a stored procedure or view from the SQL Server configured in `SQLSERVER_CONNECTION_STRING`. You can attach a Showplan file, supply a live session ID in database mode, and download the findings as Markdown.
 
 AI is off by default in the browser. Select a provider to request a proposed rewrite. Provider credentials and models come from the same server-side settings as the CLI. The interface is designed for single-user loopback access.
+
+### Review a live rewrite in GitHub
+
+Set `SQLSERVER_CONNECTION_STRING` on the machine running Studio to the intended SQL Server database. Use a read-only diagnostic identity and a private network route where required. In **Database object**, select a stored procedure or view and choose an AI provider. The app reads the live definition, catalog metadata, Query Store history when available, and waits if you supply an active session ID.
+
+Set `SQL_REVIEW_GITHUB_REPOSITORY`, `SQL_REVIEW_GITHUB_BASE` and `SQL_REVIEW_GITHUB_MODULES` using the sample in `.env.example`. Store `SQL_REVIEW_GITHUB_TOKEN` as a server-side secret scoped to the repository, with Contents and Pull requests write access. Use the repository that owns the deployment SQL. Each mapping must point to an existing UTF-8 .sql file on the base branch whose content matches the live definition, ignoring BOM, line endings, and surrounding whitespace. Reconcile differences before using the draft workflow.
+
+Compare the original and candidate, edit the candidate, then choose **Create draft PR**. Studio writes the candidate to a new branch and opens a draft with finding titles and a staging checklist. Configure branch protection and production deployment approvals separately. Studio does not merge or deploy the candidate. This browser app remains a single-user loopback tool.

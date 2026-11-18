@@ -93,14 +93,35 @@
         <article class="finding">
           <h3>AI-assisted rewrite</h3>
           <p class="help">Validate the candidate in a test database before using it.</p>
-          {% if result.candidate_sql %}
-          <div class="editor-top candidate-top"><strong>Candidate T-SQL</strong><button class="outline" type="button" id="copy-sql">Copy SQL</button></div>
-          <pre id="candidate-sql">{{ result.candidate_sql }}</pre>
-          <span id="copy-status" class="help" role="status"></span>
-          <details><summary>Full AI review</summary><pre>{{ result.proposal }}</pre></details>
-          {% else %}
-          <pre>{{ result.proposal }}</pre>
+          <div class="sql-comparison">
+            <div>
+              <label for="original-sql">Original T-SQL</label>
+              <textarea id="original-sql" readonly spellcheck="false">{{ result.original_sql }}</textarea>
+            </div>
+            <div>
+              <label for="candidate-sql">Candidate T-SQL</label>
+              <textarea id="candidate-sql" maxlength="200000" spellcheck="false">{{ result.candidate_sql }}</textarea>
+            </div>
+          </div>
+          {% if not result.candidate_sql %}
+          <p class="help">Paste a complete replacement from the AI review if it is split across multiple blocks.</p>
           {% endif %}
+          <div class="actions">
+            <button class="outline" type="button" id="copy-sql">Copy SQL</button>
+            <button class="outline" type="button" id="compare-sql" data-url="{{ url_for('compare') }}">Show changes</button>
+            <span id="copy-status" class="help" role="status"></span>
+          </div>
+          <pre id="sql-diff" hidden aria-live="polite"></pre>
+          {% if result.draft_token %}
+          <form action="{{ url_for('draft') }}" method="post" id="draft-form">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="draft_token" value="{{ result.draft_token }}">
+            <p class="help">Draft target: {{ result.draft_target }}</p>
+            <button class="outline" type="submit">Create draft PR</button>
+            <p id="draft-status" class="help" role="status"></p>
+          </form>
+          {% endif %}
+          <details><summary>Full AI review</summary><pre>{{ result.proposal }}</pre></details>
         </article>
         {% endif %}
         {% if result.notes or result.evidence %}
