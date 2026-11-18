@@ -12,15 +12,17 @@ from flask import Flask, abort, jsonify, render_template, request, session
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from xml.etree.ElementTree import ParseError
 
+from deployment import configured_profile
 from github_review import DraftError, create_draft, review_target, source_digest
 from reviewer import (
-    AI_PROVIDERS, AIConfigurationError, ai_review, catalog_findings, collect,
+    AIConfigurationError, ai_review, catalog_findings, collect,
     plan_findings, render, request_findings, static_findings,
 )
 
 app = Flask(__name__)
 app.config.update(
     SECRET_KEY=secrets.token_hex(32),
+    DEPLOYMENT_PROFILE=configured_profile(),
     TRUSTED_HOSTS=["localhost", "127.0.0.1", "[::1]"],
     SESSION_COOKIE_SAMESITE="Strict",
     MAX_CONTENT_LENGTH=22 * 1024 * 1024,
@@ -31,9 +33,17 @@ PLAN_LIMIT = 20 * 1024 * 1024
 SQL_LIMIT = 200_000
 
 
+def provider_choices(profile):
+    if profile is None:
+        return PROVIDERS
+    return {key: entry["label"] for key, entry in profile.get("ai", {}).items()}
+
+
 def review_form(values, upload):
+    profile = app.config["DEPLOYMENT_PROFILE"]
+    choices = provider_choices(profile)
     provider = values["provider"]
-    if provider not in ("", *AI_PROVIDERS):
+    if provider and provider not in choices:
         raise ValueError("Choose an AI provider from the list.")
 
     evidence, notes = {}, []
@@ -42,9 +52,10 @@ def review_form(values, upload):
         parts = label.split(".")
         if len(parts) != 2 or any(not part or len(part) > 128 for part in parts):
             raise ValueError("Enter an unquoted SQL object name such as dbo.usp_GetDeals.")
-        connection = os.getenv("SQLSERVER_CONNECTION_STRING")
+        connection_env = profile["sql_connection_env"] if profile else "SQLSERVER_CONNECTION_STRING"
+        connection = os.getenv(connection_env)
         if not connection:
-            raise ValueError("Set SQLSERVER_CONNECTION_STRING on the server to review database objects.")
+            raise ValueError(f"Set {connection_env} on the server to review database objects.")
         live = values["spid"].strip()
         if live and (not re.fullmatch(r"[0-9]{1,5}", live) or not 1 <= int(live) <= 32767):
             raise ValueError("Enter a session ID from 1 to 32767.")
@@ -80,12 +91,16 @@ def review_form(values, upload):
     proposal, ai_error = "", ""
     if provider:
         try:
-            proposal = ai_review(definition, findings, evidence, provider)
-            notes.append(f"AI provider used for proposed T-SQL: {PROVIDERS[provider]}.")
+            if profile is None:
+                proposal = ai_review(definition, findings, evidence, provider)
+            else:
+                model = profile["ai"][provider]
+                proposal = ai_review(definition, findings, evidence, model["provider"], config=model)
+            notes.append(f"AI provider used for proposed T-SQL: {choices[provider]}.")
         except AIConfigurationError as exc:
             ai_error = str(exc)
         except Exception:
-            ai_error = f"{PROVIDERS[provider]} could not complete the review. Check the provider configuration and try again."
+            ai_error = f"{choices[provider]} could not complete the review. Check the provider configuration and try again."
         if ai_error:
             notes.append(ai_error)
 
@@ -102,6 +117,8 @@ def review_form(values, upload):
 def index():
     if "csrf" not in session:
         session["csrf"] = secrets.token_urlsafe(32)
+    profile = app.config["DEPLOYMENT_PROFILE"]
+    github = profile.get("github") if profile else None
     values = dict(source="editor", sql="", module="", spid="", provider="")
     result, error = None, ""
     status = 200
@@ -111,10 +128,10 @@ def index():
             values[key] = request.form.get(key, values[key])
         try:
             result = review_form(values, request.files.get("plan"))
-            if result["proposal"] and values["source"] == "database":
+            if result["proposal"] and values["source"] == "database" and (profile is None or github):
                 module = values["module"].strip()
                 try:
-                    repo, base, path = review_target(module)
+                    repo, base, path = review_target(module, github)
                 except DraftError:
                     pass
                 else:
@@ -130,7 +147,7 @@ def index():
         except Exception:
             error, status = "The review could not finish. Check SQL Server connectivity and permissions.", 500
     return render_template(
-        "index.html", csrf=session["csrf"], values=values, providers=PROVIDERS,
+        "index.html", csrf=session["csrf"], values=values, providers=provider_choices(profile), profile=profile,
         result=result, error=error,
     ), status
 
@@ -168,8 +185,12 @@ def draft():
     candidate = request.form.get("candidate", "").strip()
     if not candidate or len(candidate) > SQL_LIMIT:
         return jsonify(error="Enter a candidate between 1 and 200,000 characters."), 400
+    profile = app.config["DEPLOYMENT_PROFILE"]
+    if profile is not None and not profile.get("github"):
+        return jsonify(error="Draft PRs are disabled for this deployment."), 403
+    options = {"config": profile["github"]} if profile is not None else {}
     try:
-        url = create_draft(review["module"], review["original"], candidate + "\n", review["titles"])
+        url = create_draft(review["module"], review["original"], candidate + "\n", review["titles"], **options)
     except DraftError as exc:
         return jsonify(error=str(exc)), 400
     return jsonify(url=url)

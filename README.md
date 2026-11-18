@@ -87,3 +87,13 @@ Set `SQLSERVER_CONNECTION_STRING` on the machine running Studio to the intended 
 Set `SQL_REVIEW_GITHUB_REPOSITORY`, `SQL_REVIEW_GITHUB_BASE` and `SQL_REVIEW_GITHUB_MODULES` using the sample in `.env.example`. Store `SQL_REVIEW_GITHUB_TOKEN` as a server-side secret scoped to the repository, with Contents and Pull requests write access. Use the repository that owns the deployment SQL. Each mapping must point to an existing UTF-8 .sql file on the base branch whose content matches the live definition, ignoring BOM, line endings, and surrounding whitespace. Reconcile differences before using the draft workflow.
 
 Compare the original and candidate, edit the candidate, then choose **Create draft PR**. Studio writes the candidate to a new branch and opens a draft with finding titles and a staging checklist. Configure branch protection and production deployment approvals separately. Studio does not merge or deploy the candidate. This browser app remains a single-user loopback tool.
+
+### Configure separate tenant installations
+
+Use the same application source for each installation. Copy `deployment.example.json` to a tenant-specific configuration file and point `SQL_REVIEW_PROFILE` to that file before starting the browser app. The app reads the profile at startup. Restart it to apply configuration changes. Keep the JSON free of secrets. It names the environment variables the app uses for SQL connections, model credentials, and GitHub tokens.
+
+- `sql_connection_env` points to that tenant's read-only ODBC connection string. One SQL connection is configured per installation.
+- `ai` defines the approved choices shown in the browser. Each points to a provider, model or deployment, and any required endpoint and credential variables. Use `azure` for Azure OpenAI deployments with the supported Chat Completions API, `openai` for the hosted OpenAI API, and `compatible` for compatible Chat Completions endpoints. Use an empty mapping to disable AI. AI remains opt-in.
+- `github` sets the SQL source repository, base branch, module-to-file mapping, and token environment variable. Omit it to disable draft PR creation in that installation.
+
+Each tenant should have its own app instance and access boundary, SQL diagnostic identity, and secret bindings. In Azure, bind secret values through the hosting service's Key Vault integration. The current browser app uses loopback access. Entra ID, Azure hosting and networking, and production deployment approvals must be configured separately before multi-user access. When no profile is set, the browser uses the original environment variables. The CLI continues using its existing environment variables and flags.

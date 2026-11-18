@@ -20,12 +20,12 @@ def source_digest(sql: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
-def review_target(module: str) -> tuple[str, str, str]:
-    repo = os.getenv("SQL_REVIEW_GITHUB_REPOSITORY", "")
+def review_target(module: str, config: dict | None = None) -> tuple[str, str, str]:
+    repo = config["repository"] if config is not None else os.getenv("SQL_REVIEW_GITHUB_REPOSITORY", "")
     if not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo):
         raise DraftError("Configure SQL_REVIEW_GITHUB_REPOSITORY on the server.")
     try:
-        mapping = json.loads(os.getenv("SQL_REVIEW_GITHUB_MODULES", "{}"))
+        mapping = config["modules"] if config is not None else json.loads(os.getenv("SQL_REVIEW_GITHUB_MODULES", "{}"))
         path = mapping.get(module)
     except (ValueError, AttributeError):
         raise DraftError("Set SQL_REVIEW_GITHUB_MODULES to a JSON object.") from None
@@ -34,14 +34,14 @@ def review_target(module: str) -> tuple[str, str, str]:
         for part in path.split("/")
     ):
         raise DraftError("Map this database object to an existing .sql file on the server.")
-    return repo, os.getenv("SQL_REVIEW_GITHUB_BASE", "main"), path
+    return repo, config["base"] if config is not None else os.getenv("SQL_REVIEW_GITHUB_BASE", "main"), path
 
 
-def create_draft(module: str, original: str, candidate: str, titles: list[str]) -> str:
-    repo, base, path = review_target(module)
-    token = os.getenv("SQL_REVIEW_GITHUB_TOKEN")
+def create_draft(module: str, original: str, candidate: str, titles: list[str], *, config: dict | None = None) -> str:
+    repo, base, path = review_target(module, config)
+    token = os.getenv(config["token_env"] if config is not None else "SQL_REVIEW_GITHUB_TOKEN")
     if not token:
-        raise DraftError("Configure a repository-scoped SQL_REVIEW_GITHUB_TOKEN on the server.")
+        raise DraftError("Configure the repository-scoped GitHub token on the server.")
     if source_digest(candidate) == original:
         raise DraftError("The candidate matches the live definition. Edit it before creating a draft.")
 

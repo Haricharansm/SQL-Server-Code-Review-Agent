@@ -1,0 +1,28 @@
+{
+  "name": "Example tenant",
+  "sql_connection_env": "TENANT_SQL_CONNECTION",
+  "ai": {
+    "fast-review": {
+      "label": "Fast review",
+      "provider": "azure",
+      "endpoint_env": "TENANT_FOUNDRY_ENDPOINT",
+      "model_env": "TENANT_FAST_DEPLOYMENT",
+      "key_env": "TENANT_FOUNDRY_KEY"
+    },
+    "deep-review": {
+      "label": "Deep review",
+      "provider": "azure",
+      "endpoint_env": "TENANT_FOUNDRY_ENDPOINT",
+      "model_env": "TENANT_DEEP_DEPLOYMENT",
+      "key_env": "TENANT_FOUNDRY_KEY"
+    }
+  },
+  "github": {
+    "repository": "example-org/database-source",
+    "base": "main",
+    "modules": {
+      "dbo.usp_GetDeals": "procedures/usp_GetDeals.sql"
+    },
+    "token_env": "TENANT_GITHUB_TOKEN"
+  }
+}

@@ -247,25 +247,31 @@ def ai_setting(name: str) -> str:
 
 
 def ai_review(definition: str, findings: list[Finding], evidence: dict,
-              provider: str = "azure") -> str:
+              provider: str = "azure", *, config: dict | None = None) -> str:
     from openai import AzureOpenAI, OpenAI
 
+    settings = config or {}
+
     if provider == "azure":
-        model = ai_setting("AZURE_OPENAI_DEPLOYMENT")
+        model = ai_setting(settings.get("model_env", "AZURE_OPENAI_DEPLOYMENT"))
         client = AzureOpenAI(
-            azure_endpoint=ai_setting("AZURE_OPENAI_ENDPOINT"),
-            api_key=ai_setting("AZURE_OPENAI_API_KEY"),
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+            azure_endpoint=ai_setting(settings.get("endpoint_env", "AZURE_OPENAI_ENDPOINT")),
+            api_key=ai_setting(settings.get("key_env", "AZURE_OPENAI_API_KEY")),
+            api_version=os.getenv(settings.get("version_env", "AZURE_OPENAI_API_VERSION" if not config else ""), "2024-10-21"),
             timeout=60,
         )
     elif provider == "openai":
-        model = ai_setting("OPENAI_MODEL")
-        client = OpenAI(api_key=ai_setting("OPENAI_API_KEY"),
+        model = ai_setting(settings.get("model_env", "OPENAI_MODEL"))
+        client = OpenAI(api_key=ai_setting(settings.get("key_env", "OPENAI_API_KEY")),
                         base_url="https://api.openai.com/v1", timeout=60)
     elif provider == "compatible":
-        model = ai_setting("SQL_REVIEW_AI_MODEL")
-        client = OpenAI(api_key=os.getenv("SQL_REVIEW_AI_API_KEY") or "local",
-                        base_url=ai_setting("SQL_REVIEW_AI_BASE_URL"), timeout=60)
+        model = ai_setting(settings.get("model_env", "SQL_REVIEW_AI_MODEL"))
+        if "key_env" in settings:
+            api_key = ai_setting(settings["key_env"])
+        else:
+            api_key = (os.getenv("SQL_REVIEW_AI_API_KEY") if config is None else None) or "local"
+        client = OpenAI(api_key=api_key,
+                        base_url=ai_setting(settings.get("endpoint_env", "SQL_REVIEW_AI_BASE_URL")), timeout=60)
     else:
         raise AIConfigurationError(f"Choose an AI provider from {', '.join(AI_PROVIDERS)}.")
 
