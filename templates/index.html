@@ -24,6 +24,7 @@
     <div class="deployment-title">
       <h2 id="deployment-heading">Deployment setup</h2>
       <p>{{ profile.name if profile else "Local defaults" }}</p>
+      <a class="outline settings-link" href="{{ url_for('settings') }}">Settings</a>
     </div>
     <dl class="deployment-status">
       <div><dt>Live SQL Server</dt><dd><span class="status-dot {{ 'configured' if setup.sql }}"></span>{{ "Connection configured" if setup.sql else "Setup needed" }}</dd></div>

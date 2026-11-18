@@ -97,3 +97,7 @@ Use the same application source for each installation. Copy `deployment.example.
 - `github` sets the SQL source repository, base branch, module-to-file mapping, and token environment variable. Omit it to disable draft PR creation in that installation.
 
 Each tenant should have its own app instance and access boundary, SQL diagnostic identity, and secret bindings. In Azure, bind secret values through the hosting service's Key Vault integration. The current browser app uses loopback access. Entra ID, Azure hosting and networking, and production deployment approvals must be configured separately before multi-user access. When no profile is set, the browser uses the original environment variables. The CLI continues using its existing environment variables and flags.
+
+### Configure a local session in the browser
+
+From **Deployment setup**, open **Settings**. Enter a read-only ODBC connection string, up to three approved model choices, and optional GitHub draft PR settings. Choose **Save settings** and return to the review screen. The values take effect immediately for the running Studio process, stay in memory, and clear on restart. Clear browser-entered settings to return to the original environment defaults. Use the server-managed deployment profile above for durable tenant settings. Studio makes a configured tenant profile read-only in the browser.

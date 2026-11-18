@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings · SQL Review Studio</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}">
+</head>
+<body>
+<header class="topbar"><div class="topbar-inner">
+  <div class="brand"><span class="mark" aria-hidden="true">›_</span> SQL Review Studio</div>
+  <a class="back-link" href="{{ url_for('index') }}">Back to review</a>
+</div></header>
+<main class="settings-page">
+  <div class="intro"><h1>Settings</h1>
+    {% if managed %}<p>This installation uses the server-managed profile {{ profile.name }}.</p>
+    {% else %}<p>Configure this local Studio session. Changes take effect after saving and clear when Studio restarts.</p>{% endif %}
+  </div>
+  {% if saved %}<p role="status" class="notice saved-notice">Settings updated. <a href="{{ url_for('index') }}">Return to review</a></p>{% endif %}
+  {% if error %}<p role="alert" class="notice error">{{ error }}</p>{% endif %}
+  {% if managed %}
+  <section class="panel"><h2>Managed deployment</h2>
+    <p>Update the file referenced by <code>SQL_REVIEW_PROFILE</code> and the tenant’s server-side settings to change this installation. Restart Studio to load changes.</p>
+  </section>
+  {% else %}
+  <form method="post" autocomplete="off" class="settings-form">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <section class="panel">
+      <h2>Live SQL Server</h2>
+      <label for="name">Workspace name</label>
+      <input id="name" name="name" type="text" maxlength="100" value="{{ profile.name if profile else '' }}" placeholder="Local Studio">
+      <label for="connection">Read-only ODBC connection string</label>
+      <input id="connection" name="connection" type="password" maxlength="4096" autocomplete="new-password"
+             placeholder="{{ 'Leave blank to keep the saved connection' if status.sql and profile else 'Driver={ODBC Driver 18 for SQL Server};Server=…;Database=…' }}">
+      <p class="help">Use a SQL identity with diagnostic access. Saving stores the setting in Studio’s memory and does not connect to the database.</p>
+      {% if status.sql and profile %}<label class="clear-field"><input type="checkbox" name="clear_connection" value="yes"> Clear the saved connection</label>{% endif %}
+    </section>
+    <section class="panel">
+      <h2>AI models</h2>
+      <p class="help">Add up to three choices. For Azure OpenAI, use your Foundry resource endpoint and the deployment name.</p>
+      {% for slot in range(1, 4) %}
+      {% set prefix = 'STUDIO_MODEL_' ~ slot %}
+      {% set choice = profile.ai.get('model-' ~ slot, {}) if profile else {} %}
+      <details {% if slot == 1 or choice %}open{% endif %}>
+        <summary>Model {{ slot }}{% if choice %} · {{ choice.label }}{% endif %}</summary>
+        <div class="settings-grid">
+          <div><label for="provider_{{ slot }}">Provider</label><select id="provider_{{ slot }}" name="provider_{{ slot }}">
+            <option value="">Disabled</option>
+            {% for id, title in [('azure','Azure OpenAI / Foundry'),('openai','OpenAI'),('compatible','OpenAI-compatible')] %}
+            <option value="{{ id }}" {{ 'selected' if choice.get('provider') == id }}>{{ title }}</option>
+            {% endfor %}
+          </select></div>
+          <div><label for="label_{{ slot }}">Display name</label><input type="text" id="label_{{ slot }}" name="label_{{ slot }}" maxlength="100" value="{{ choice.get('label', '') }}" placeholder="Fast review"></div>
+          <div><label for="model_{{ slot }}">Model or deployment name</label><input type="text" id="model_{{ slot }}" name="model_{{ slot }}" maxlength="150" value="{{ model_fields.get(prefix ~ '_NAME', '') }}"></div>
+          <div><label for="endpoint_{{ slot }}">Endpoint <span>Azure or compatible</span></label><input type="text" id="endpoint_{{ slot }}" name="endpoint_{{ slot }}" maxlength="512" value="{{ model_fields.get(prefix ~ '_ENDPOINT', '') }}" placeholder="https://your-resource.openai.azure.com/"></div>
+          <div><label for="key_{{ slot }}">API key</label><input type="password" id="key_{{ slot }}" name="key_{{ slot }}" maxlength="4096" autocomplete="new-password" placeholder="{{ 'Leave blank to keep the key for the same endpoint' if choice.get('key_env') else 'Optional for compatible endpoints' }}"></div>
+        </div>
+      </details>
+      {% endfor %}
+    </section>
+    <section class="panel">
+      <h2>GitHub draft PRs</h2>
+      {% set git = profile.get('github') if profile else none %}
+      <div class="settings-grid">
+        <div><label for="repository">Repository</label><input type="text" id="repository" name="repository" maxlength="150" value="{{ git.repository if git else '' }}" placeholder="owner/repository"></div>
+        <div><label for="base">Base branch</label><input type="text" id="base" name="base" maxlength="200" value="{{ git.base if git else '' }}" placeholder="main"></div>
+      </div>
+      <label for="modules">SQL file mappings <span>one per line</span></label>
+      <textarea id="modules" name="modules" rows="3" maxlength="10000" placeholder="dbo.usp_GetDeals=procedures/usp_GetDeals.sql">{% if git %}{% for module, path in git.modules.items() %}{{ module }}={{ path }}
+{% endfor %}{% endif %}</textarea>
+      <label for="github_token">Repository-scoped GitHub token</label>
+      <input type="password" id="github_token" name="github_token" maxlength="4096" autocomplete="new-password"
+             placeholder="{{ 'Leave blank to keep the token for the same repository' if git else 'Token with Contents and Pull requests write access' }}">
+      <p class="help">Leave the repository blank to disable draft PRs in this session.</p>
+    </section>
+    <div class="actions"><button class="primary" type="submit">Save settings</button><a href="{{ url_for('index') }}">Back to review</a></div>
+  </form>
+  {% if profile %}
+  <form method="post" class="reset-settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="text-button" name="action" value="reset">Clear browser-entered settings</button>
+  </form>
+  {% endif %}
+  {% endif %}
+</main>
+</body>
+</html>

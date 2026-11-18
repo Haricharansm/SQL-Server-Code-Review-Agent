@@ -37,9 +37,9 @@ def review_target(module: str, config: dict | None = None) -> tuple[str, str, st
     return repo, config["base"] if config is not None else os.getenv("SQL_REVIEW_GITHUB_BASE", "main"), path
 
 
-def create_draft(module: str, original: str, candidate: str, titles: list[str], *, config: dict | None = None) -> str:
+def create_draft(module: str, original: str, candidate: str, titles: list[str], *, config: dict | None = None, lookup=os.getenv) -> str:
     repo, base, path = review_target(module, config)
-    token = os.getenv(config["token_env"] if config is not None else "SQL_REVIEW_GITHUB_TOKEN")
+    token = lookup(config["token_env"] if config is not None else "SQL_REVIEW_GITHUB_TOKEN")
     if not token:
         raise DraftError("Configure the repository-scoped GitHub token on the server.")
     if source_digest(candidate) == original:

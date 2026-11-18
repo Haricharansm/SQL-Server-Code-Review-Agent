@@ -77,3 +77,44 @@ class DeploymentTests(TestCase):
             self.assertIn(expected, page)
         for secret in ("private-sql-value", "private-ai-value", "private-github-value"):
             self.assertNotIn(secret, page)
+
+    def test_browser_settings_are_used_without_echoing_credentials(self):
+        from re import search
+
+        with patch.dict(app.config, {"DEPLOYMENT_PROFILE": None, "LOCAL_SETTINGS": (None, {}, "")}):
+            client = app.test_client()
+            self.assertIn(b'href="/settings"', client.get("/").data)
+            page = client.get("/settings")
+            csrf = search(r'name="csrf" value="([^"]+)"', page.get_data(as_text=True))[1]
+            response = client.post("/settings", data=dict(
+                csrf=csrf, name="Test tenant", connection="secret-odbc",
+                provider_1="azure", label_1="Foundry fast", model_1="fast-deployment",
+                endpoint_1="https://example.invalid", key_1="secret-ai",
+                repository="example/sql", base="main", modules="dbo.p=sql/p.sql", github_token="secret-git",
+            ), follow_redirects=True)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b"Settings updated", response.data)
+            self.assertNotIn(b"secret-", response.data)
+            home = client.get("/")
+            for expected in (b"Connection configured", b"1 of 1 configured", b"Repository configured", b"Foundry fast"):
+                self.assertIn(expected, home.data)
+            with patch("app.collect", return_value=("SELECT 1", {}, [])) as collect, patch(
+                "openai.AzureOpenAI"
+            ) as model:
+                model.return_value.chat.completions.create.return_value.choices[0].message.content = (
+                    "```sql\nSELECT 2;\n```"
+                )
+                result = client.post("/", data=dict(csrf=csrf, source="database", module="dbo.p", provider="model-1"))
+                collect.assert_called_once_with("secret-odbc", "dbo", "p", None)
+                self.assertEqual(model.call_args.kwargs["api_key"], "secret-ai")
+                self.assertIn(b"Create draft PR", result.data)
+            client.post("/settings", data=dict(csrf=csrf, action="reset"))
+            self.assertNotIn(b"Foundry fast", client.get("/").data)
+
+    def test_managed_settings_reject_browser_edits(self):
+        with patch.dict(app.config, {"DEPLOYMENT_PROFILE": self.profile}):
+            client = app.test_client()
+            self.assertIn(b"Managed deployment", client.get("/settings").data)
+            with client.session_transaction() as session:
+                csrf = session["csrf"]
+            self.assertEqual(client.post("/settings", data=dict(csrf=csrf, name="Override")).status_code, 403)

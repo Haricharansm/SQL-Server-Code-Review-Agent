@@ -3,17 +3,19 @@
 from difflib import unified_diff
 import json
 import os
+from ipaddress import ip_address
 from pathlib import Path
 import re
 import secrets
 from tempfile import TemporaryDirectory
 
 from defusedxml.common import DefusedXmlException
-from flask import Flask, abort, jsonify, render_template, request, session
+from flask import Flask, abort, g, jsonify, redirect, render_template, request, session, url_for
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from xml.etree.ElementTree import ParseError
 
 from deployment import configured_profile
+from local_settings import form_settings
 from github_review import DraftError, create_draft, review_target, source_digest
 from reviewer import (
     AIConfigurationError, ai_review, catalog_findings, collect,
@@ -24,6 +26,7 @@ app = Flask(__name__)
 app.config.update(
     SECRET_KEY=secrets.token_hex(32),
     DEPLOYMENT_PROFILE=configured_profile(),
+    LOCAL_SETTINGS=(None, {}, ""),
     TRUSTED_HOSTS=["localhost", "127.0.0.1", "[::1]"],
     SESSION_COOKIE_SAMESITE="Strict",
     MAX_CONTENT_LENGTH=22 * 1024 * 1024,
@@ -40,6 +43,19 @@ def provider_choices(profile):
     return {key: entry["label"] for key, entry in profile.get("ai", {}).items()}
 
 
+@app.before_request
+def snapshot_settings():
+    local, bindings, revision = app.config["LOCAL_SETTINGS"]
+    managed = app.config["DEPLOYMENT_PROFILE"]
+    g.profile = managed if managed is not None else local
+    g.bindings = bindings if managed is None else {}
+    g.settings_revision = revision if managed is None else ""
+
+
+def setting(name, default=None):
+    return g.bindings[name] if name in g.bindings else os.getenv(name, default)
+
+
 def deployment_status(profile):
     sql_env = profile["sql_connection_env"] if profile else "SQLSERVER_CONNECTION_STRING"
     legacy_ai = {
@@ -51,25 +67,25 @@ def deployment_status(profile):
     models = profile.get("ai", {}) if profile is not None else legacy_ai
     ready = {
         choice for choice, options in models.items()
-        if all(os.getenv(options[key], "").strip()
+        if all(setting(options[key], "").strip()
                for key in ("endpoint_env", "model_env", "key_env") if key in options)
     }
     github = profile.get("github") if profile is not None else None
     if profile is None:
         try:
-            modules = json.loads(os.getenv("SQL_REVIEW_GITHUB_MODULES", "{}"))
+            modules = json.loads(setting("SQL_REVIEW_GITHUB_MODULES", "{}"))
         except ValueError:
             modules = {}
         if isinstance(modules, dict):
-            github = {"repository": os.getenv("SQL_REVIEW_GITHUB_REPOSITORY"),
+            github = {"repository": setting("SQL_REVIEW_GITHUB_REPOSITORY"),
                       "modules": modules, "token_env": "SQL_REVIEW_GITHUB_TOKEN"}
     drafts = bool(github and github["repository"] and github["modules"]
-                  and os.getenv(github["token_env"], "").strip())
-    return dict(sql_env=sql_env, sql=bool(os.getenv(sql_env, "").strip()), ready=ready, drafts=drafts)
+                  and setting(github["token_env"], "").strip())
+    return dict(sql_env=sql_env, sql=bool(setting(sql_env, "").strip()), ready=ready, drafts=drafts)
 
 
 def review_form(values, upload):
-    profile = app.config["DEPLOYMENT_PROFILE"]
+    profile = g.profile
     choices = provider_choices(profile)
     provider = values["provider"]
     if provider and provider not in choices:
@@ -82,7 +98,7 @@ def review_form(values, upload):
         if len(parts) != 2 or any(not part or len(part) > 128 for part in parts):
             raise ValueError("Enter an unquoted SQL object name such as dbo.usp_GetDeals.")
         connection_env = profile["sql_connection_env"] if profile else "SQLSERVER_CONNECTION_STRING"
-        connection = os.getenv(connection_env)
+        connection = setting(connection_env)
         if not connection:
             raise ValueError(f"Set {connection_env} on the server to review database objects.")
         live = values["spid"].strip()
@@ -124,7 +140,8 @@ def review_form(values, upload):
                 proposal = ai_review(definition, findings, evidence, provider)
             else:
                 model = profile["ai"][provider]
-                proposal = ai_review(definition, findings, evidence, model["provider"], config=model)
+                options = {"lookup": setting} if g.bindings else {}
+                proposal = ai_review(definition, findings, evidence, model["provider"], config=model, **options)
             notes.append(f"AI provider used for proposed T-SQL: {choices[provider]}.")
         except AIConfigurationError as exc:
             ai_error = str(exc)
@@ -146,7 +163,7 @@ def review_form(values, upload):
 def index():
     if "csrf" not in session:
         session["csrf"] = secrets.token_urlsafe(32)
-    profile = app.config["DEPLOYMENT_PROFILE"]
+    profile = g.profile
     github = profile.get("github") if profile else None
     values = dict(source="editor", sql="", module="", spid="", provider="")
     result, error = None, ""
@@ -181,8 +198,40 @@ def index():
     ), status
 
 
+@app.route("/settings", methods=["GET", "POST"])
+def settings():
+    if not ip_address(request.remote_addr or "0.0.0.0").is_loopback:
+        abort(403)
+    if "csrf" not in session:
+        session["csrf"] = secrets.token_urlsafe(32)
+    managed = app.config["DEPLOYMENT_PROFILE"] is not None
+    saved = request.args.get("saved") == "1"
+    error = ""
+    if request.method == "POST":
+        check_csrf()
+        if managed:
+            abort(403)
+        try:
+            if request.form.get("action") == "reset":
+                app.config["LOCAL_SETTINGS"] = (None, {}, secrets.token_hex(16))
+            else:
+                profile, bindings = form_settings(request.form, g.bindings)
+                app.config["LOCAL_SETTINGS"] = (profile, bindings, secrets.token_hex(16))
+            return redirect(url_for("settings", saved="1"), code=303)
+        except ValueError as exc:
+            error = str(exc)
+    response = app.make_response((render_template(
+        "settings.html", csrf=session["csrf"], managed=managed, profile=g.profile,
+        model_fields={key: value for key, value in g.bindings.items()
+                      if key.endswith(("_NAME", "_ENDPOINT", "_PROVIDER"))},
+        saved=saved, error=error, status=deployment_status(g.profile),
+    ), 400 if error else 200))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def draft_signer():
-    return URLSafeTimedSerializer(app.secret_key, salt=f"draft:{session['csrf']}")
+    return URLSafeTimedSerializer(app.secret_key, salt=f"draft:{session['csrf']}:{g.settings_revision}")
 
 
 def check_csrf():
@@ -214,10 +263,12 @@ def draft():
     candidate = request.form.get("candidate", "").strip()
     if not candidate or len(candidate) > SQL_LIMIT:
         return jsonify(error="Enter a candidate between 1 and 200,000 characters."), 400
-    profile = app.config["DEPLOYMENT_PROFILE"]
+    profile = g.profile
     if profile is not None and not profile.get("github"):
         return jsonify(error="Draft PRs are disabled for this deployment."), 403
     options = {"config": profile["github"]} if profile is not None else {}
+    if g.bindings:
+        options["lookup"] = setting
     try:
         url = create_draft(review["module"], review["original"], candidate + "\n", review["titles"], **options)
     except DraftError as exc:
