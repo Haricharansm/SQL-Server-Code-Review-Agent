@@ -1,6 +1,7 @@
 """Local browser interface for the SQL Server reviewer."""
 
 from difflib import unified_diff
+import json
 import os
 from pathlib import Path
 import re
@@ -37,6 +38,34 @@ def provider_choices(profile):
     if profile is None:
         return PROVIDERS
     return {key: entry["label"] for key, entry in profile.get("ai", {}).items()}
+
+
+def deployment_status(profile):
+    sql_env = profile["sql_connection_env"] if profile else "SQLSERVER_CONNECTION_STRING"
+    legacy_ai = {
+        "azure": {"endpoint_env": "AZURE_OPENAI_ENDPOINT", "model_env": "AZURE_OPENAI_DEPLOYMENT",
+                  "key_env": "AZURE_OPENAI_API_KEY"},
+        "openai": {"model_env": "OPENAI_MODEL", "key_env": "OPENAI_API_KEY"},
+        "compatible": {"endpoint_env": "SQL_REVIEW_AI_BASE_URL", "model_env": "SQL_REVIEW_AI_MODEL"},
+    }
+    models = profile.get("ai", {}) if profile is not None else legacy_ai
+    ready = {
+        choice for choice, options in models.items()
+        if all(os.getenv(options[key], "").strip()
+               for key in ("endpoint_env", "model_env", "key_env") if key in options)
+    }
+    github = profile.get("github") if profile is not None else None
+    if profile is None:
+        try:
+            modules = json.loads(os.getenv("SQL_REVIEW_GITHUB_MODULES", "{}"))
+        except ValueError:
+            modules = {}
+        if isinstance(modules, dict):
+            github = {"repository": os.getenv("SQL_REVIEW_GITHUB_REPOSITORY"),
+                      "modules": modules, "token_env": "SQL_REVIEW_GITHUB_TOKEN"}
+    drafts = bool(github and github["repository"] and github["modules"]
+                  and os.getenv(github["token_env"], "").strip())
+    return dict(sql_env=sql_env, sql=bool(os.getenv(sql_env, "").strip()), ready=ready, drafts=drafts)
 
 
 def review_form(values, upload):
@@ -148,7 +177,7 @@ def index():
             error, status = "The review could not finish. Check SQL Server connectivity and permissions.", 500
     return render_template(
         "index.html", csrf=session["csrf"], values=values, providers=provider_choices(profile), profile=profile,
-        result=result, error=error,
+        result=result, error=error, setup=deployment_status(profile),
     ), status
 
 

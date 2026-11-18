@@ -61,3 +61,19 @@ class DeploymentTests(TestCase):
             path.write_text(json.dumps(self.profile))
             with self.assertRaisesRegex(ValueError, "environment variable references"):
                 load_profile(path)
+
+    def test_homepage_shows_setup_status_without_secret_values(self):
+        with patch.dict(app.config, {"DEPLOYMENT_PROFILE": self.profile}), patch.dict(
+            "os.environ", {"TENANT_SQL_CONNECTION": "private-sql-value",
+                          "TENANT_FOUNDRY_KEY": "private-ai-value",
+                          "TENANT_FOUNDRY_ENDPOINT": "https://example.invalid",
+                          "TENANT_FAST_DEPLOYMENT": "fast",
+                          "TENANT_GITHUB_TOKEN": "private-github-value"}, clear=True
+        ):
+            response = app.test_client().get("/")
+        page = response.get_data(as_text=True)
+        for expected in ("Deployment setup", "Example tenant", "Connection configured",
+                         "1 of 2 configured", "Repository configured", "Deep review · setup needed"):
+            self.assertIn(expected, page)
+        for secret in ("private-sql-value", "private-ai-value", "private-github-value"):
+            self.assertNotIn(secret, page)

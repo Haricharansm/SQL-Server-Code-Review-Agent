@@ -20,6 +20,24 @@
     <p>Inspect SQL, investigate performance, and generate a candidate rewrite.</p>
   </div>
 
+  <section class="deployment" aria-labelledby="deployment-heading">
+    <div class="deployment-title">
+      <h2 id="deployment-heading">Deployment setup</h2>
+      <p>{{ profile.name if profile else "Local defaults" }}</p>
+    </div>
+    <dl class="deployment-status">
+      <div><dt>Live SQL Server</dt><dd><span class="status-dot {{ 'configured' if setup.sql }}"></span>{{ "Connection configured" if setup.sql else "Setup needed" }}</dd></div>
+      <div><dt>AI models</dt><dd><span class="status-dot {{ 'configured' if setup.ready }}"></span>{{ setup.ready|length }} of {{ providers|length }} configured</dd></div>
+      <div><dt>GitHub draft PRs</dt><dd><span class="status-dot {{ 'configured' if setup.drafts }}"></span>{{ "Repository configured" if setup.drafts else "Setup needed" }}</dd></div>
+    </dl>
+    <details class="setup-help">
+      <summary>Configuration and review workflow</summary>
+      <p>Set <code>SQL_REVIEW_PROFILE</code> to a tenant profile based on <code>deployment.example.json</code>, then restart Studio. Set the read-only SQL connection in <code>{{ setup.sql_env }}</code>.</p>
+      <p>Choose <strong>Database object</strong> and an AI model, then run a review to compare and edit the rewrite. A mapped GitHub file and server-side token enable <strong>Create draft PR</strong>.</p>
+      <p>These indicators show which settings are present. A review checks connectivity and access.</p>
+    </details>
+  </section>
+
   <div class="workspace">
     <form class="panel" method="post" enctype="multipart/form-data" id="review-form">
       <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -38,7 +56,7 @@
           <input type="text" name="module" id="module" placeholder="dbo.usp_GetDeals" value="{{ values.module }}">
           <label for="spid" class="secondary-label">Active session ID <span>optional</span></label>
           <input type="number" name="spid" id="spid" min="1" max="32767" placeholder="57" value="{{ values.spid }}">
-          <p class="help">Uses the SQL Server connection configured on this machine.</p>
+          <p class="help">{% if setup.sql %}Uses the SQL Server connection configured for this deployment.{% else %}Set <code>{{ setup.sql_env }}</code> on the Studio server to enable live review.{% endif %}</p>
         </div>
       </fieldset>
       <fieldset class="options">
@@ -49,7 +67,7 @@
         <select name="provider" id="provider" aria-describedby="provider-help">
           <option value="">Off · rules and diagnostics only</option>
           {% for id, name in providers.items() %}
-          <option value="{{ id }}" {{ 'selected' if values.provider == id }}>{{ name }}</option>
+          <option value="{{ id }}" {{ 'selected' if values.provider == id }}>{{ name }}{{ " · setup needed" if id not in setup.ready }}</option>
           {% endfor %}
         </select>
         <p class="help" id="provider-help">Selecting a provider sends the SQL definition and collected evidence to that endpoint.</p>
